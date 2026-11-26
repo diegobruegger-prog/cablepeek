@@ -1,9 +1,9 @@
 import AppKit
 import CryptoKit
 
-/// Automatische Updates: fragt täglich GitHub, lädt nur neuere Versionen und installiert nur,
-/// was mit Diegos Schlüssel signiert ist. Der private Schlüssel liegt nicht auf GitHub.
-/// Es wird nichts über den Mac mitgeschickt.
+/// Automatic updates: checks GitHub daily, downloads only newer versions, and installs only
+/// versions signed with Diego's key. The private key is not on GitHub.
+/// No information about the Mac is sent.
 @MainActor enum Update {
     static let publicKey = "IS1P7wj/2w/SZ55SbBeegivm7FrkMBk4viDslSfdgRc="
     #if TESTFEED
@@ -29,7 +29,7 @@ import CryptoKit
         let t = Timer.scheduledTimer(withTimeInterval: 86400, repeats: true) { _ in MainActor.assumeIsolated { go() } }
         t.tolerance = 3600
     }
-    /// true = neue Version installiert (App startet neu), false = schon aktuell.
+    /// true = new version installed (app restarts), false = already up to date.
     @discardableResult static func run(idle: @escaping @MainActor () -> Bool) async throws -> Bool {
         guard !running else { return false }
         running = true; defer { running = false }
@@ -51,12 +51,12 @@ import CryptoKit
         try await tool("/usr/bin/ditto", ["-x", "-k", file.path, tmp.path])
         let new = tmp.appendingPathComponent("CablePeek.app")
         try await tool("/usr/bin/codesign", ["--verify", "--deep", "--strict", new.path])
-        // Kennung und Version aus dem signierten Paket lesen, damit niemand eine alte Version unterschieben kann.
+        // Read the identifier and version from the signed bundle to prevent anyone from substituting an old version.
         guard let info = NSDictionary(contentsOf: new.appendingPathComponent("Contents/Info.plist")),
               info["CFBundleIdentifier"] as? String == Bundle.main.bundleIdentifier,
               let v = info["CFBundleShortVersionString"] as? String, v == feed.version, newer(v, than: current) else { throw Failed("content") }
 
-        // Nie mitten im Auswerfen oder während jemand die Karte benutzt.
+        // Never during an ejection or while someone is using the card.
         while !idle() { try await Task.sleep(nanoseconds: 2_000_000_000) }
         _ = try fm.replaceItemAt(app, withItemAt: new)
         let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/sh")

@@ -5,18 +5,18 @@ let german = Locale.preferredLanguages.first?.hasPrefix("de") ?? false
 func L(_ de: String, _ en: String) -> String { german ? de : en }
 
 struct Cable { var speed: String; var bps: Double; var watts: Int }
-/// Ausgehandelter Ladevertrag (USB-PD) und was das Netzteil insgesamt anbietet.
+/// Negotiated charging contract (USB-PD) and the charger's total power offering.
 struct Charger { var watts: Int; var volts: Double; var maxWatts: Int; var pd: Bool }
 struct Device: Equatable { var name: String; var bps: Double; var volumes: [String]; var loc: UInt32 }
 struct PortState {
     var number: Int
     var active = false
     var uuid = ""
-    var location = ""   // z. B. left-back, left-front, right; leer = unbekannt
+    var location = ""   // e.g. left-back, left-front, right; empty = unknown
     var magsafe = false
-    /// SD-Slot: Bustempo des ausgehandelten Kartenmodus in MB/s und der Modus selbst (z. B. SDR104).
+    /// SD slot: bus speed of the negotiated card mode in MB/s and the mode itself (e.g. SDR104).
     var sdMBs: Double?
-    /// Thunderbolt: ausgehandeltes Leitungstempo zum ersten Gerät und dessen Name.
+    /// Thunderbolt: negotiated link speed to the first device and its name.
     var tbBps: Double?
     var tbName = ""
     var sdMode = ""
@@ -40,7 +40,7 @@ struct PortState {
     }
 
     var isThunderbolt: Bool { transports.contains("CIO") }
-    /// Am Port selbst zählt das schnellste Gerät; hinter Hubs hängen oft langsame Beigeräte.
+    /// The fastest device connected directly to the port counts; hubs often have slower peripherals behind them.
     var main: Device? {
         let storage = devices.filter { !$0.volumes.isEmpty }
         return (storage.isEmpty ? devices : storage).min { a, b in
@@ -58,7 +58,7 @@ struct PortState {
     static func fmt(_ bps: Double) -> String {
         bps >= 1e9 ? "\(Int((bps / 1e9).rounded())) Gb/s" : "\(Int((bps / 1e6).rounded())) Mb/s"
     }
-    /// Grobe Bestwerte in MB/s nach Protokoll-Overhead.
+    /// Approximate maximum speeds in MB/s after protocol overhead.
     static func realMBs(_ bps: Double) -> Double {
         switch bps { case 2e10...: return 2000; case 1e10...: return 1000; case 5e9...: return 430
         case 4e8...: return 40; default: return bps / 8e6 * 0.7 }
@@ -68,7 +68,7 @@ struct PortState {
         return s < 90 ? "\(Int(s)) s" : s < 5400 ? "\(Int((s / 60).rounded())) min" : String(format: "%.1f h", s / 3600)
     }
     var detail: String {
-        // SD: Busgrenze minus etwa 10 % Protokoll; die Karte selbst kann langsamer sein.
+        // SD: bus limit minus about 10% for protocol overhead; the card itself may be slower.
         if let s = sdMBs, let m = main {
             let who = m.volumes.isEmpty ? m.name : m.volumes.joined(separator: ", ")
             return L("SD-Karte · \(who) · 100 GB ab \(Self.duration(100_000 / (s * 0.9)))", "SD card · \(who) · 100 GB in about \(Self.duration(100_000 / (s * 0.9)))")
@@ -80,8 +80,8 @@ struct PortState {
         }
         if isThunderbolt, tbBps != nil { return "Thunderbolt" + (tbName.isEmpty ? "" : " · \(tbName)") + (charger.map { L(" · lädt mit \($0.watts) W", " · charging at \($0.watts) W") } ?? "") }
         if isThunderbolt { return L("Thunderbolt / USB4 verbunden", "Thunderbolt / USB4 connected") + (charger.map { L(" · lädt mit \($0.watts) W", " · charging at \($0.watts) W") } ?? "") }
-        // Wie bei Geräten nur der Name; Spannung und Netzteil-Maximum stehen im Menü.
-        // MagSafe ist nur das Kabel; dahinter steckt ein normales USB-C-Netzteil, PD oder langsam.
+        // As with devices, show only the name; voltage and the charger's maximum are in the menu.
+        // MagSafe is only the cable; behind it is a regular USB-C charger, either PD or a slower one.
         if let c = charger {
             let kind = c.pd ? L("PD-Netzteil", "PD charger") : L("Langsames Netzteil", "Slow charger")
             return magsafe ? "MagSafe · " + kind : kind
@@ -129,7 +129,7 @@ enum Hardware {
         }
         return r
     }
-    /// Nur Laufwerke unter diesem Gerät; tiefere USB-Geräte (Hub) zählen dort selbst.
+    /// Only drives under this device; deeper USB devices (hubs) count as devices themselves.
     static func volumes(_ e: io_registry_entry_t, _ m: [String: String]) -> [String] {
         var out: [String] = []
         func walk(_ e: io_registry_entry_t) {
@@ -146,14 +146,14 @@ enum Hardware {
         }
         walk(e); return out
     }
-    /// Apple hinterlegt die Gehäuseposition im Elternknoten des Ports.
+    /// Apple stores the enclosure position in the port's parent node.
     static func location(_ e: io_registry_entry_t) -> String {
         let o = IOOptionBits(kIORegistryIterateRecursively | kIORegistryIterateParents)
         guard let d = IORegistryEntrySearchCFProperty(e, kIOServicePlane, "port-location" as CFString, kCFAllocatorDefault, o) as? Data else { return "" }
         return String(decoding: d.prefix { $0 != 0 }, as: UTF8.self).lowercased()
     }
     static let sdBase = 200
-    /// Eingebauter SD-Slot. Ohne Karte bleiben alte Kartenwerte stehen, darum nur bei aktiver Verbindung lesen.
+    /// Built-in SD slot. Old card values remain when no card is present, so read only while connected.
     static func sd(_ e: io_registry_entry_t, _ ports: inout [Int: PortState]) {
         let n = sdBase + ((prop(e, "PortNumber") as? NSNumber)?.intValue ?? 1)
         var p = PortState(number: n)
@@ -163,7 +163,7 @@ enum Hardware {
         if p.active, let mhz = (prop(e, "Calculated Clock Frequency (MHz)") as? NSNumber)?.doubleValue, mhz > 0 {
             let width = (prop(e, "Bus Width") as? NSNumber)?.doubleValue ?? 4
             let mode = (prop(e, "Speed Mode") as? String ?? "").replacingOccurrences(of: "UHS: ", with: "")
-            // MB/s = Takt × Datenleitungen / 8, bei DDR zwei Übertragungen pro Takt.
+            // MB/s = clock × data lines / 8; DDR transfers data twice per clock.
             let mbs = mhz * width / 8 * (mode.contains("DDR") ? 2 : 1)
             let info = prop(e, "Card Characteristics") as? [String: Any]
             let name = (info?["Product Name"] as? String).map { "SD \($0)" } ?? L("SD-Karte", "SD card")
@@ -172,10 +172,10 @@ enum Hardware {
         }
         ports[n] = p
     }
-    /// Thunderbolt-Tempo pro Port. Geräte-Switches (Depth 1) gibt es nur mit angeschlossenem Gerät;
-    /// ihr Upstream-Port kennt das ausgehandelte Tempo. Kodierung wie in der USB4-Spezifikation:
-    /// Current Link Speed 0x8 = 10, 0x4 = 20, 0x2 = 40 Gb/s pro Lane; Width 2 = zwei Lanes gebündelt.
-    /// Nicht mit echter Hardware geprüft (26.11.2026): unbekannte Werte fallen auf "Thunderbolt" zurück.
+    /// Thunderbolt speed per port. Device switches (Depth 1) exist only when a device is connected;
+    /// their upstream port knows the negotiated speed. Encoding follows the USB4 specification:
+    /// Current Link Speed 0x8 = 10, 0x4 = 20, 0x2 = 40 Gb/s per lane; Width 2 = two lanes bonded.
+    /// Not verified on real hardware (26.11.2026): unknown values fall back to "Thunderbolt".
     static func thunderbolt() -> [(socket: Int?, bps: Double, name: String)] {
         var r: [(socket: Int?, bps: Double, name: String)] = []
         each("IOThunderboltSwitch") { sw in
@@ -205,14 +205,14 @@ enum Hardware {
             if let d = prop(e, "Description") as? String, d.hasPrefix("Port-SD") { sd(e, &ports); return }
             guard let d = prop(e, "Description") as? String, d.hasPrefix("Port-USB-C@") || d.hasPrefix("Port-MagSafe"),
                   let n = (prop(e, "PortNumber") as? NSNumber)?.intValue else { return }
-            // MagSafe zählt eigene Nummern ab 1; eigener Bereich, damit nichts mit USB-C kollidiert.
+            // MagSafe numbers start at 1; use a separate range to avoid collisions with USB-C.
             let mag = d.hasPrefix("Port-MagSafe")
             var p = PortState(number: mag ? magsafeBase + n : n)
             p.magsafe = mag
             p.active = prop(e, "ConnectionActive") as? Bool ?? false
             p.uuid = prop(e, "ConnectionUUID") as? String ?? ""
             p.transports = prop(e, "TransportsActive") as? [String] ?? []
-            // MagSafe hat keine port-location; es sitzt immer links ganz hinten.
+            // MagSafe has no port-location; it is always at the far back on the left.
             p.location = mag ? "magsafe" : location(e)
             ports[p.number] = p
         }
@@ -222,7 +222,7 @@ enum Hardware {
                   let md = prop(e, "Metadata") as? [String: Any], let v = md["VDOs"] as? [Data] else { return }
             ports[n]?.cable = decode(v, type: (md["Product Type"] as? NSNumber)?.intValue ?? 0)
         }
-        // Ladeleistung: nur Quellen mit ausgehandeltem Vertrag zählen; die stärkste gewinnt.
+        // Charging power: count only sources with a negotiated contract; the highest wins.
         each("IOPortFeaturePowerSource") { e in
             let type = prop(e, "ParentPortTypeDescription") as? String ?? ""
             guard type == "USB-C" || type.hasPrefix("MagSafe"),
@@ -235,14 +235,14 @@ enum Hardware {
             let best = opts.compactMap { ($0["Max Power (mW)"] as? NSNumber)?.intValue }.max() ?? mw
             let c = Charger(watts: Int((Double(mw) / 1000).rounded()), volts: (mv / 100).rounded() / 10, maxWatts: Int((Double(max(best, mw)) / 1000).rounded()),
                             pd: (prop(e, "PowerSourceName") as? String) == "USB-PD")
-            // Nach dem Abziehen bleibt der letzte Vertrag stehen, darum nur bei aktivem Port.
+            // The last contract remains after unplugging, so only use it while the port is active.
             if ports[n]?.active == true, (ports[n]?.charger?.watts ?? 0) < c.watts { ports[n]?.charger = c }
         }
         var bus: [UInt32: Int] = [:]
         each("AppleUSBHostPort") { e in
             guard let l = (prop(e, "locationID") as? NSNumber)?.uint32Value else { return }
             if let d = prop(e, "usb-c-port-number") as? Data, let n = d.first { bus[l >> 24] = Int(n); return }
-            // Neuere Macs (z. B. Mac17,9) haben den Wert nicht, dafür den Pfad zum Port: …/Port-USB-C@2
+            // Newer Macs (e.g. Mac17,9) lack this value but provide the path to the port: …/Port-USB-C@2
             if let path = prop(e, "UsbIOPort") as? String, let r = path.range(of: "/Port-USB-C@", options: .backwards),
                let n = Int(path[r.upperBound...]) { bus[l >> 24] = n }
         }
@@ -253,13 +253,13 @@ enum Hardware {
             let name = prop(e, "USB Product Name") as? String ?? L("USB-Gerät", "USB device")
             ports[n]?.devices.append(Device(name: name, bps: s, volumes: volumes(e, m), loc: l))
         }
-        // Ein Thunderbolt-Gerät: eindeutig. Mehrere: nur über die Socket-Nummer zuordnen.
+        // One Thunderbolt device: unambiguous. For multiple devices, assign only by socket number.
         let tb = thunderbolt(), tbPorts = ports.values.filter { $0.isThunderbolt }.map(\.number)
         for t in tb {
             guard let n = tb.count == 1 && tbPorts.count == 1 ? tbPorts.first : t.socket.flatMap({ tbPorts.contains($0) ? $0 : nil }) else { continue }
             ports[n]?.tbBps = t.bps; ports[n]?.tbName = t.name
         }
-        // MagSafe zuerst: es sitzt links ganz hinten, vor den USB-C-Ports.
+        // MagSafe first: it is at the far back on the left, before the USB-C ports.
         return ports.values.sorted { ($0.magsafe ? 0 : 1, $0.number) < ($1.magsafe ? 0 : 1, $1.number) }
     }
 }

@@ -33,7 +33,7 @@ struct Card: View {
         default: return p.verdict ?? p.detail
         }
     }
-    /// Netzteil ohne USB-PD: gleicher Blitz, nur orange.
+    /// Charger without USB-PD: same lightning bolt, just orange.
     var slowCharge: Bool { p.main == nil && !p.isThunderbolt && p.charger?.pd == false }
     var color: Color { p.slowStorage || slowCharge ? .orange : (p.speedText == nil ? .secondary : .green) }
     var body: some View {
@@ -57,14 +57,14 @@ struct Card: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: left ? .leading : .trailing)
     }
 }
-/// Kleine Glasmarke am Rand: zeigt, wo man hovern kann. Klicks gehen durch.
+/// Small glass indicator on the edge: shows where you can hover. Clicks pass through.
 struct Hint: View {
     var body: some View {
         Group {
             if #available(macOS 26, *) { Capsule().fill(.white.opacity(0.08)).glassEffect(.regular, in: .capsule) }
             else { Capsule().fill(.ultraThinMaterial) }
         }
-        // Hell und dunkel umrandet, damit sie auf jedem Hintergrund sichtbar bleibt.
+        // Outlined in light and dark so it stays visible on any background.
         .overlay(Capsule().strokeBorder(.white.opacity(0.45), lineWidth: 0.5).padding(0.5))
         .overlay(Capsule().strokeBorder(.black.opacity(0.22), lineWidth: 0.5))
         .shadow(color: .black.opacity(0.25), radius: 1.5)
@@ -72,7 +72,7 @@ struct Hint: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
-/// Erster Klick zählt sofort, ohne die App in den Vordergrund zu holen.
+/// First click takes effect immediately without bringing the app to the foreground.
 final class CardHost: NSHostingView<Card> { override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true } }
 struct Glass: ViewModifier {
     func body(content: Content) -> some View {
@@ -86,10 +86,10 @@ struct Glass: ViewModifier {
     private var timers: [Int: Timer] = [:]
     private var hints: [Int: NSPanel] = [:]
     static var hintsOn: Bool {
-        get { UserDefaults.standard.object(forKey: "edgeHints") as? Bool ?? true }   // Standard: an
+        get { UserDefaults.standard.object(forKey: "edgeHints") as? Bool ?? true }   // Default: on
         set { UserDefaults.standard.set(newValue, forKey: "edgeHints") }
     }
-    /// Marke pro belegtem Port, solange dort keine Karte offen ist.
+    /// Hint for each occupied port when its card is not open.
     func syncHints(_ ports: [PortState]) {
         var want: Set<Int> = []
         for p in ports where Self.hintsOn && p.active && panels[p.number] == nil {
@@ -120,18 +120,18 @@ struct Glass: ViewModifier {
     static func frame(_ p: PortState) -> NSRect? {
         guard let s = screen() else { return nil }
         let l = p.location
-        // Die Ports liegen hinten am Gehäuse, also unten am Bildschirm nahe dem Scharnier.
-        // Ohne bekannte Lage nach Nummer stapeln, damit sich nichts überdeckt.
-        // Der SD-Slot sitzt rechts vorne, also tiefer als der rechte USB-C-Port.
+        // The ports are at the back of the case, so at the bottom of the screen near the hinge.
+        // If the location is unknown, stack by number to avoid overlap.
+        // The SD slot is at the front right, so lower than the right USB-C port.
         let dy: CGFloat = l == "sd" ? 20 : l == "magsafe" ? 230 : l.hasSuffix("back") ? 150 : l.hasSuffix("front") ? 70 : l == "left" || l == "right" ? 110 : 70 + 80 * CGFloat(p.number - 1)
         return NSRect(origin: NSPoint(x: left(p) ? s.frame.minX : s.frame.maxX - size.width, y: s.frame.minY + dy), size: size)
     }
-    /// Schmaler Streifen am Rand, der die Anzeige hervorholt.
+    /// Narrow strip along the edge that reveals the display.
     static func edge(_ p: PortState) -> NSRect? {
         guard let f = frame(p) else { return nil }
         return NSRect(x: left(p) ? f.minX - 1 : f.maxX - 5, y: f.midY - 35, width: 6, height: 70)
     }
-    /// Sichtbare Karte (ohne leeren Teil des Fensters).
+    /// Visible card (excluding the empty part of the window).
     func card(_ p: PortState) -> NSRect? {
         guard let f = Self.frame(p), let w = panels[p.number] else { return nil }
         let cw = min(f.width, (w.contentView as? NSHostingView<Card>).map { $0.fittingSize.width } ?? 300)
@@ -154,7 +154,7 @@ struct Glass: ViewModifier {
             w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
             panels[p.number] = w; return w
         }()
-        // Nur beim Hovern klickbar (Auswerfen), sonst gehen Klicks durch.
+        // Clickable only while hovered (eject); otherwise clicks pass through.
         w.ignoresMouseEvents = !interactive
         w.contentView = CardHost(rootView: Card(p: p, settled: settled, left: left, interactive: interactive))
         if fresh {
@@ -196,7 +196,7 @@ struct Glass: ViewModifier {
         let menu = NSMenu(); menu.delegate = self; item.menu = menu
         ports = Hardware.scan(); icon()
         listen()
-        // Liest nur die Mausposition mit, fängt keine Ereignisse ab.
+        // Tracks only the mouse position; does not intercept events.
         NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in
             MainActor.assumeIsolated { self?.mouse(NSEvent.mouseLocation) }
         }
@@ -232,12 +232,12 @@ struct Glass: ViewModifier {
             let old = ports.first { $0.number == p.number }
             if !p.active { if connectedAt.removeValue(forKey: p.number) != nil || old?.active == true { overlay.hide(p.number); shown[p.number] = nil; held.remove(p.number) }; continue }
             if old?.active != true || old?.uuid != p.uuid { connectedAt[p.number] = Date(); shown[p.number] = nil }
-            // 8 s nach dem Einstecken nachführen, danach nur noch Menü.
+            // Keep updating for 8 s after plugging in, then only in the menu.
             guard let t = connectedAt[p.number] else { continue }
             let age = Date().timeIntervalSince(t)
             let settled = age > 3
-            // Zuerst gewinnt kurz Type-C (5 V, 15 W), USB-PD folgt nach ~0,5 s. Bis dahin nicht anzeigen;
-            // reine 5-V-Netzteile erscheinen nach der Einschwingzeit trotzdem.
+            // Type-C is briefly selected first (5 V, 15 W); USB-PD follows after ~0.5 s. Don't show it until then;
+            // pure 5 V chargers still appear after the settling period.
             if !settled, p.charger?.pd == false { p.charger = nil }
             let key = "\(p.speedText ?? "")|\(p.verdict ?? "")|\(p.detail)|\(settled || p.speedText != nil)"
             if shown[p.number] != key, !held.contains(p.number) { shown[p.number] = key; overlay.show(p, settled: settled) }
@@ -247,7 +247,7 @@ struct Glass: ViewModifier {
     }
     func icon() {
         let slow = ports.contains { $0.active && $0.slowStorage }
-        // Eigenes Zeichen: USB-C-Buchse. Langsam = kleiner Punkt, kein Alarm-Dreieck.
+        // Custom icon: USB-C port. Slow = small dot, not a warning triangle.
         let img = NSImage(size: NSSize(width: 24, height: 16), flipped: false) { _ in
             NSColor.black.set()
             let port = NSBezierPath(roundedRect: NSRect(x: 1, y: 4, width: 17, height: 8), xRadius: 4, yRadius: 4)
@@ -282,7 +282,7 @@ struct Glass: ViewModifier {
         if over == dwell?.port { return }
         dwell?.timer.invalidate(); dwell = nil
         guard let n = over else { return }
-        // Kurz warten, damit blosses Vorbeifahren nichts auslöst.
+        // Wait briefly so simply passing by doesn't trigger anything.
         dwell = (n, Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { _ in
             MainActor.assumeIsolated {
                 self.dwell = nil

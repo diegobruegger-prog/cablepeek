@@ -2,10 +2,10 @@ import AppKit
 import DiskArbitration
 
 enum Eject {
-    /// Laufende Auswürfe; solange startet die App nicht für ein Update neu.
+    /// Ongoing ejections; the app won't restart for an update while one is in progress.
     static var busy = 0
-    /// Normales Auswerfen ganzer Datenträger, nie erzwungen: erst alle Volumes sauber aushängen, dann auswerfen.
-    /// Ist etwas in Gebrauch, lehnt macOS ab und das Laufwerk bleibt verbunden.
+    /// Eject whole disks normally, never forcibly: unmount all volumes cleanly first, then eject.
+    /// If anything is in use, macOS refuses and the drive remains connected.
     static func run(_ names: [String], done: @escaping (Bool) -> Void) {
         guard let session = DASessionCreate(kCFAllocatorDefault) else { return done(false) }
         DASessionSetDispatchQueue(session, .main)
@@ -14,7 +14,7 @@ enum Eject {
             let url = URL(fileURLWithPath: "/Volumes/\(n)") as CFURL
             guard let v = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, url), let whole = DADiskCopyWholeDisk(v),
                   let id = DADiskGetBSDName(whole) else { return done(false) }
-            // Nie das Systemlaufwerk.
+            // Never the system drive.
             if let d = DADiskCopyDescription(whole) as? [String: Any], d[kDADiskDescriptionDeviceInternalKey as String] as? Bool == true { return done(false) }
             disks[String(cString: id)] = whole
         }
